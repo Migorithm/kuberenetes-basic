@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: kubia
+spec:
+  replicas: 1
+  selector:
+    component: kubia
+  template:
+    metadata:
+      name: kubia
+      labels:
+        component: kubia
+    spec:
+      containers:
+        - name: kubia
+          image: saka1023/kubia
+          ports:
+            - containerPort: 8080
+
+# To run this, 
+# kubectl apply -f 1-2rc.yaml
+
