@@ -83,6 +83,7 @@ spec:
       ports:
         - containerPort: 8080
 ```
+
 apply above file:<br>
 ```sh
 kubectl apply -f kubia-manual.yaml

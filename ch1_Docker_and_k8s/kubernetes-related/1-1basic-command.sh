@@ -27,3 +27,15 @@ kubectl get svc
 #To see if it works
 curl <external_ip>:8080
 # -> You've hit kubia-2v4zs
+
+
+#horizontal scaling
+kubectl scale rc kubia --replicas=3
+
+#hit service ip again
+curl 10.110.225.11:8080
+# You've hit kubia-2v4zs
+curl 10.110.225.11:8080
+# You've hit kubia-2kvpf
+
+#Q1 how to make it round-robin? -- Ingress

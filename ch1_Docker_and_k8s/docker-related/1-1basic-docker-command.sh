@@ -8,7 +8,7 @@ docker run busybox echo "hello world!"
 
 
 #stopping and removing container
-docker stop <container_name or id>
-docker rm <container_name or id>
+docker stop container_name or id
+docker rm container_name or id
 
 sudo service docker start
