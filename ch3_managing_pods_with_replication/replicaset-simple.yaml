@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata: 
+  name: migo-rs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: migo-pod
+  template:
+    metadata:
+      labels:
+        app: migo-pod
+    spec:
+      containers:
+        - name: migo-con
+          image: saka1023/k8s
+          ports:
+            - containerPort: 8080
