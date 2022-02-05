@@ -246,3 +246,160 @@ In this example, each expression must contain a key, operator, and possibly(depe
 - Exists
 - DoesNotExist
 If you specify multiple expressions, all those expressions must evaluate to true for the selector to match a pod.
+
+## Running exactly one pod on each node with DaemonSets
+Certain cases exist when you want a pod to run on each and every node in the cluster, especially infrastructure-related pods that perform system-level operations. For example:
+- Log collector
+- Resource monitor
+- Kubernetes' own kube-proxy process
+Outside of Kubernetes, such processes would usually be started through system init scripts or the systemd daemon. On Kubernetes nodes, you can still use *systemd* to run your system processes, but then you can't take advantage of all the features Kubernetes provides.
+
+### Using Daemonset
+To run a pod on all cluster nodes, you create a DaemonSet object which is much like RC or RS except DaemonSet already have a target node specified and skip the Kubernetes Scheduler. Plus, DaemonSet has no notion of a desired replica count. If a node goes down, DaemonSet doesn't cause the pod to be created else where. Instead, when a pod is added to the cluster, it deploys a new pod instance to it. By default, it deploys pods to all nodes. But if you select node by ***nodeSelector*** property in the pod template, you can restrict nodes to which DS deploys the pods.
+
+### Creating DaemonSet YAML definition
+You'll create a DaemonSet that runs a mock ssd-monitor process that prints "SSD OK" every 5 seconds. For this, we will use the following dockerfile.
+```Dockerfile
+FROM busybox
+ENTRYPOINT while true; do echo 'SSD OK'; sleep 5; done
+```
+<br>
+
+And the DaemonSet menifest
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ssd-monitor
+spec:
+  selector:
+    matchLabels:
+      app: ssd-monitor
+  template:
+    matadata:
+      labels: ssd-monitor
+    spec:
+      nodeSelector:
+        disk: ssd    # this will select nodes with the 'disk=ssd' label
+      containers:
+        - name: main
+          image: saka1023/ssd-monitor
+```
+
+Don't forget to label your nodes with the *disk=ssd* label by the following command:
+```sh
+#Get node info
+kubectl get node
+
+#Label the noded
+kubectl label node minikube disk=ssd
+
+#Apply DaemonSet
+kubectl apply -f "DaemonSet-menifest.yaml"
+```
+
+## Running pods that perform a single completable task
+Up to now, we've talked only about pods that need to run continuously. But, cases exist where you only want to run a task that terminates after completing its work. 
+
+### Introducing the job resource
+K8S includes support for this through the ***Job*** resource which allows you to run a pod whose container isn't restarted when the process running inside finishes successfully.<br><br>
+In the event of a node failure, the pods will be rescheduled to other nodes. In the event of a failure of the process itself(when the process returns an error exit code), the Job can be configured to either restart or not.<br><br>
+
+An example of a job would be if you had data stored somewhere and you needed to transfrom and export it somewhere. You're going to emulate this by running a container image built on top of *busybox* image, which invokes the sleep command for two minutes as follows. 
+```Dockerfile
+FROM busybox
+ENTRYPOINT echo "$(date) Batch job starting"; sleep 120; echo "$(date) Finished succesfully"
+```
+
+### Creating a Job Resource
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-job
+spec:
+  template:
+    metadata:
+      labels:
+        app: batch-job   #You're not specifying a pods selector(it will be created based on the labels in the pod template)
+  spec:
+    restartPolicy: OnFailure  #Jobs can't use the default restart policy which is Always.
+    containers:
+      - image: saka1023/batch-job
+        name: main
+```
+As described in comment, Job pods can't use the default *restartPolicy* which defaults to *Always* because they're not meant to run indefinitely. Therefore, you need to explicitly set the restart policy to either ***OnFailure*** or ***Never***.<br><br>
+
+Let's have fun with it!
+```sh
+#apply
+kubectl apply -f "job.yaml"
+
+#get jobs info
+kubectl get jobs
+```
+After two minutes have passed, the pod will no longer show up. By default, completed pods aren't shown when you list pods, unless you use the --show-all(or -a) switch.
+
+### Running multiple pod instances ina Job
+Jobs can be configured to create more than one pod instance and run them either in parallel or sequentailly. It's done by setting ***completions*** and ***parallelism*** properties in Job spec.<br><br>
+
+*Running Job Pods sequentially* - If you need to run jobs multiple times, back to back.
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata: 
+  name: multi-completion-batch
+spec:
+  completions: 5 # Setting completions to 5 makes this job run five pods sequentially
+  template:
+  ...
+``` 
+<br>
+
+*Running Job Pods in parallel* 
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: multi-completion-batch
+spec:
+  completions: 5
+  parallelism: 2 #Up to two pods can run in parallel
+  template:
+  ...
+```
+<br>
+
+*Scaling a Job* - You can change *parallelism* property while Job is running:
+```sh
+kubectl scale job multi-completion-batch --replicas 3
+```
+
+### Limiting the time allowed for a Job pod to complete
+How long should the Job wait for a pod to finish? A Pod's time can be limited by setting ***activeDeadlineSeconds*** in the pod spec. If pod runs longer than that, the system will try to terminate it and will mark the Job as failed. Plus, you can also configure how many times a Job can be retried before it's marked as failed by specifying ***spec.backoffLimit***. If not specified, it *defaults to 6*.
+
+## Scheduling Jobs to run periodically or once in the future.
+Many batch jobs need to be run at a specific time in the future or repeatedly in the specified interval. Similar to Linux's CronJob, this job is configured by creating a CronJob resource. 
+
+### Creating a CronJob
+Imagine you need to run the batch job from your previous example every 15 minutes. The following menifest will create a resource that caters to your need. 
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: batch-job-every-fifteen-minutes
+spec:
+  schedule: "0,15,30,45 * * * *" 
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: periodic-batch-job
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: main
+              image: saka1023/batch-job
+```
+

@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ssd-monitor
+spec:
+  selector:
+    matchLabels:
+      app: ssd-monitor
+  template:
+    matadata:
+      labels: ssd-monitor
+    spec:
+      nodeSelector:
+        disk: ssd
+      containers:
+        - name: main
+          image: saka1023/ssd-monitor
