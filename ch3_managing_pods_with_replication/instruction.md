@@ -402,4 +402,14 @@ spec:
             - name: main
               image: saka1023/batch-job
 ```
+*Configuring the schedule*
+- minute
+- hour
+- day of month 
+- month
+- day of week
+<br>
+"0,30 * 1 * *" - Running every 30minutes on the first day of the month.<br>
+"0 3 * * 0" - Running 3AM every Sunday.(the last zero stands for Sunday)<br>
 
+If you specify ***spec.startingDeadlineSeconds***, it can set deadline. 

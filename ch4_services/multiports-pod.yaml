@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: migo-pod
+  labels: 
+    app: migo-pod
+spec:
+  containers:
+    - name: migo-con
+      image: saka1023/k8s
+      ports:
+        - name: http
+          containerPort: 8080
+        - name: https
+          containerPort: 8443
