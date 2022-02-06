@@ -361,4 +361,18 @@ There are things that you must be aware related to externally originating connec
 ### Understanding Why Ingresses are needed
 One important reason is each *LoadBalancer* service requires its own load-balancer with its own public IP address, whereas an Ingress only requires one, even when providing access to dozens of services. When a clinet sends an HTTP request to the Ingress, the host and path in the request determine which service the request is forwarded to.
 ![image info](./ingress.png)
+<br>
+Ingress operate at the application layer of the network stack(HTTP) and can provide features such as cookie-based session affinity and the like, which Services can't.
 
+### Understanding that an *Ingress Controller* is required
+To make Ingress resources work, an Ingress controller needs to be running in the cluster. Initially Minikube didn't provide a controller, but it now includes an add-on that can be enabled to let you try out the Ingress functionality. To enable the Ingress add-on in Minikube:
+```sh
+#To see the whole list of addons
+minikube addons list
+
+#To enable ingress
+minikube addons enable ingress
+```
+The above command should have spun up an Ingress Controller as another pod. To confirm this, run ***kubectl get po --all-namespaces***
+
+### Creating an Ingress resource
