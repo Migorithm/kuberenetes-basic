@@ -162,3 +162,115 @@ spec:
       targetPort: https #Port 443 is mapped to the container's port called 'https'
 ```
 The biggest benefit of doing this is it enables you to change port numbers later without having to change the service spec. 
+
+### Discovering services
+How do the client pods know the IP and port of a service? Do you need to create service first and manually look up its IP address? Not really. Kubernetes provides ways for client pods to discover a service's IP and port as follows:
+- Through Environment variables
+- Through DNS(FQDN)
+
+
+*Discovering Service through Environment variable*<br>
+If you create a service before creating the client pods, process in those pods can get the IP address and port of the service by inspecting their environment variables. If you already had pods, you can delete them and let controllers spin them back up. And then list environment variable by executing:
+```sh
+kubectl exec "pod_name" env
+PATH= ...
+...
+MIGO_SERVICE_HOST=10.111.249.153  # This is the cluster IP of the service
+MIGO_SERVICE_PORT=80              # And this is the port the service is available on
+```
+Note that dashes in the service name are converted to underscores and all letters are uppercased. <br><br>
+
+*Discovering Service through DNS*<br>
+One of the namespaces preset is *kube-system* namespacecs and one of its pods is called *kube-dns*. This pod runs a DNS server, which all other pods running in the clsuter are automatically configured to use(K8S does this by modifying each container's /etc/resolv.conf file)<br><br>
+
+Each service gets a DNS entry in the internal DNS server, and client pods that know the name of the service can access it through its ***fully qualified domain name(FQDN)***. So revisiting the frontend-backend, for example, a frontend pod can connect to the backend database by openning a connection to the following FQDN:<br><br>
+
+    backend-database.default.svc.cluster.local
+- backend-database : the name of the service.
+- default : namespace.
+- svc.cluster.local : configurable cluster domain suffix.
+
+Connecting to a service can be even simpler than that. You can omit the *svc.cluster.local* suffix and even the namespace, when pods that are trying to connect to the service are in the same namesapce. Let's try this:
+```sh
+#Open bash shell session of one of the pods
+kubectl exec -it "pod_name" -- bash
+
+#Inside the container, send curl command
+curl http://migo.default.svc.cluster.local
+curl http://migo.default
+curl http://migo
+```
+<br>
+The last three will all work. Look at the /etc/resolv.conf file in the container and you'll understand why you can omit the suffix part.
+```sh
+cat /etc/resolv.conf
+```
+
+Note that while *curl*-ing the service works fine, ping-ing it doesn't. That's because the service's clusterIP is a virtual IP and only has meaning when combined with the service port. This will be revisited later.<br>
+
+## Connecting to services living outside the cluster
+Cases exist when you'd like to expose external services through the Kubernetes services feature. In this subsection, how you could manage them will be discussed.
+
+### Service endpoints
+Firstly, it's worth talking about what Service really is. Services don't link to pods directly. If you use *kubectl describe* command on your service, it shows you:
+```sh
+kubectl describe svc migo-svc
+Name:              migo-svc
+Namespace:         default
+...
+...
+Selector:          pod=migo-pod
+Type:              ClusterIP
+...
+Endpoints:         172.17.0.10:8080,172.17.0.4:8080,172.17.0.9:8080
+```
+Here, Selector is used to create the list of endpoints and the actual Endpoints(plural) are presensted in the form of IPs and ports. Endpoint resource is like any other K8S resource, so you can display its basic info with kubectl get: 
+```sh
+kubectl get endpoints migo-svc
+NAME       ENDPOINTS                                          AGE
+migo-svc   172.17.0.10:8080,172.17.0.4:8080,172.17.0.9:8080   9h
+```
+<br>
+
+The idea is decoupling services and endpoints so you can configure and update endpoints manually. How do you do that? - That's as simple as creating a service without a pod selector. And then it's up to you to create Endpoint resources to specify the list of endpoints for the service. Let's do it in action:<br>
+```yaml
+apiVersion: v1
+kind: Service
+metadata: 
+  name: external-endpoint  # This must be matched with the name of the Endpoints obejct
+spec:                      # No selector defined
+  ports:
+    - port: 80 
+```
+```yaml
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: external-endpoint  # This must be matched with the name of the Service object
+subsets:
+  - addresses:
+    - ip: 11.11.11.11      # The IPs of the endpoints that the service will forward
+    - ip: 22.22.22.22      # connections to 
+    ports:
+      - port: 80           # Tartget port of the endpoints
+```
+The Endpoints object needs to have the same name as the service. And to reiterate, containers created after the service is created will include the environment variables for the service.<br>
+
+### Creating an alias for an external service
+Instead of exposing external service manually, a simpler method may allow you to refer to an external service by its FQDN. To do that, create a Service resource with the ***type*** field set to ***ExternalName***: 
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-service
+spec:
+  type: ExternalName                # Service type is set to ExternalName
+  externalName: abc.company.com     # FQDN of the actual service
+  ports:
+    - port: 80
+```
+After the service is created, pods can connect to the external service through:
+- *external-service.default.svc.cluster.local*
+- *external-service.default*
+- *external-service*
+This way, you can modify the service definition and point it to a different service anytime later by only changing the *externalName* attribute.<br>*ExternalName* services are implemneted soley at the DNS level - simple CNAME DNS record is created for the service. Therefore, clients using this service will connect to external servicec directly, bypassing the service completely. For this reason, these types of services don't even get a clusterIP.
