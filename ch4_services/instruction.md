@@ -359,4 +359,6 @@ There are things that you must be aware related to externally originating connec
 
 ## Exposing services externally through an Ingress
 ### Understanding Why Ingresses are needed
-One important reason is each *LoadBalancer* service requires its own load-balancer with its own public IP address, whereas an Ingress only requires one, even when providing access to dozens of services.
+One important reason is each *LoadBalancer* service requires its own load-balancer with its own public IP address, whereas an Ingress only requires one, even when providing access to dozens of services. When a clinet sends an HTTP request to the Ingress, the host and path in the request determine which service the request is forwarded to.
+![image info](./ingress.png)
+
