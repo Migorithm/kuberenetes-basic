@@ -8,4 +8,7 @@ spec:
       name: kubia
       ports:
         - containerPort: 8080
-        
+        #Specifying containerPort is purely informational. Omitting them has no effect
+        #on whether client can connect to the pod through the pod or not.
+        #If container is accepting connections through a port bound to 0.0.0.0 address,
+        #other pods can always connect to it. 

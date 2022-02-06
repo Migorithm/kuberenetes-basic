@@ -3,7 +3,7 @@ docker build -t <image>:<tag> .
    # '.' refers to the build context
 
 #Run the image
-docker -d -p 8080:8080  --name container_name image:tag
+docker run -d -p 8080:8080  --name container_name image:tag
     # -- '-d' : detach
     # -- '-p' : port 
     # -- '--name' :container name

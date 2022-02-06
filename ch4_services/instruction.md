@@ -356,3 +356,7 @@ There are things that you must be aware related to externally originating connec
     The problem is, if no local pods exist, the connection will hang. You therefore need to ensure the load balancer forwards connections only to nodes that have at least one such pod. The other drawback is connections will not be spread evenly across the pods.
 - ***Non-preservation of the client IP***
     Usually, the pods backing a service can obtain the client's IP address when clients inside the cluster connect to the service. But when the connection is received through a node port, the packets' source IP is changed because Source Network Address Translation(SNAT) is performed on the packets. The *Local* external traffic policy affects the preservation of client IP as there wouldn't be additional hop(SNAT not performed)
+
+## Exposing services externally through an Ingress
+### Understanding Why Ingresses are needed
+One important reason is each *LoadBalancer* service requires its own load-balancer with its own public IP address, whereas an Ingress only requires one, even when providing access to dozens of services.
