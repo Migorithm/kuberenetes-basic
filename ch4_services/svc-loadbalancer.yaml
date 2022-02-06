@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: LoadBalancer
+metadata:
+  name: migo-loadbalancer
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8080
+  selector:
+    app: migo-pod

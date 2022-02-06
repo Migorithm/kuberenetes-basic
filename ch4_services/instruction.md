@@ -273,4 +273,86 @@ After the service is created, pods can connect to the external service through:
 - *external-service.default.svc.cluster.local*
 - *external-service.default*
 - *external-service*
-This way, you can modify the service definition and point it to a different service anytime later by only changing the *externalName* attribute.<br>*ExternalName* services are implemneted soley at the DNS level - simple CNAME DNS record is created for the service. Therefore, clients using this service will connect to external servicec directly, bypassing the service completely. For this reason, these types of services don't even get a clusterIP.
+This way, you can modify the service definition and point it to a different service anytime later by only changing the *externalName* attribute.<br>*ExternalName* services are implemneted soley at the DNS level - simple CNAME DNS record is created for the service. Therefore, clients using this service will connect to external servicec directly, bypassing the service completely. For this reason, these types of services don't even get a clusterIP.<br>
+
+## Exposing services to external clients
+Sometimes, you'll also want to expose certain services like frontend web servers to the outside.<br>
+For that, you have a few ways:
+- Setting the service type to ***NodePort***
+- Setting the service type to ***LoadBalancer***
+- Creating an ***Ingress resource*** - This operates at the HTTP level
+
+### Using a NodePort Service
+When creating NodePort service, you make K8S reserve a port on *ALL* its nodes and forward incoming connections to the pods that are part of the service. NodePort can be accessed not only through service's internal clusterIP but also through any node's IP and the reserved node port. See the following listing:
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: migo-nodeport
+spec:
+  type: NodePort            # Set the service type to NodePort
+  ports:
+    - port: 80              # Port of the service's internal clusterIP
+      targetPort: 8080      # This is the target port of the backing pods
+      nodePort: 32067       # The service will be accessible through port 30123 of each of your cluster nodes
+  selector:
+    app: migo-pod
+```
+Specifying the *nodePort* is optional. If you don't K8s will choose a random port. 
+```sh
+kubectl get svc
+NAME            TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+migo-nodeport   NodePort    10.98.43.60     <none>        80:32067/TCP   8s
+```
+Look at *EXTERNAL-IP* column. It shows < nodes >, indicating the service is accessible through the IP address of any cluster node. To put it in another way, The service is accessible at the following addresses:
+- 10.98.43.60:80
+- "1st_node's IP":32067
+- "2st_node's IP":32067
+Before you can access your service through the node port, you need to configure the firewall pocity to allow external connections to your nodes on that port. On GCP, you can do that by:
+```sh
+gcloud compute firewall-rules create migo-svc-rule --allow=tcp:32067
+```
+So now, you can access your service through port 32067 of one of the nodes' IPs. But to do that, you need to figure out the IP of a node first. 
+```sh
+#On minikube
+minikube service migo-nodeport
+* Opening service default/migo-nodeport in default browser...
+  http://192.168.49.2:32302
+
+#On GCP
+kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="ExternalIP")].address}'
+
+#curl-ing
+curl http://192.168.49.2:32302
+You've hit migo-deployment-cc4c757f6-fffcr
+```
+A fatal flaw of NodePort is if you only point your clients to the first node, when that node fails, your clients can't access the service anymore. That's why it makes sense to put a loadbalancer in front of the nodes to make sure you're *spreading* requests acress all healthy nodes and never sending them to a node that's offline.
+
+### Exposing a service through LoadBalancer
+All you need to do is just replace service's type to ***LoadBalancer*** instead of *NodePort*. The load balancer will have its own unique, publicly accessible IP address and will redirect all connections to your service. Be aware that Loadbalancer is an extension of a NodePort Service. Here's the listing:
+```yaml
+apiVersion: v1
+kind: LoadBalancer
+metadata:
+  name: migo-loadbalancer
+spec:
+  type: LoadBalancer          #This type of service obtains a loadbalancer from the infrastructure hosting the K8s cluster
+  ports:
+    - port: 80
+      targetPort: 8080
+  selector:
+    app: migo-pod
+```
+As your service is now exposed externally, you may try accessing it with your *web server*. You may see the browser hits the eact same pod every time. Even with *Session Affinity* not being changed(set to None) it behaves like that because browser is using keep-alive conections and sends all its requests through a single connection. *curl* command opens a new connection every time so it wouldn't happen.
+
+### Understanding the peculiarities of external connections.
+There are things that you must be aware related to externally originating connections to internal services:
+- ***Network hops***
+    When an external client connects to a service through the *NodePort* or *LoadBalancer*, the randomly chosen pod may or may not be running on the same node that received the connection, resulting in additional network hop being required. You can prevent this by configuring the service to redirect external traffic only to pods on the node that received connection. This is done by following annotation:
+    ```yaml
+    spec:
+      externalTrafficPolicy: Local
+    ```
+    The problem is, if no local pods exist, the connection will hang. You therefore need to ensure the load balancer forwards connections only to nodes that have at least one such pod. The other drawback is connections will not be spread evenly across the pods.
+- ***Non-preservation of the client IP***
+    Usually, the pods backing a service can obtain the client's IP address when clients inside the cluster connect to the service. But when the connection is received through a node port, the packets' source IP is changed because Source Network Address Translation(SNAT) is performed on the packets. The *Local* external traffic policy affects the preservation of client IP as there wouldn't be additional hop(SNAT not performed)
