@@ -1,0 +1,15 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: migo-ingress
+spec:
+  rules:
+  - host: migo.example.com 
+    http: 
+      paths:
+        - path: /         
+          backend:
+            service:
+              name: migo-nodeport
+              port: 
+                number: 80

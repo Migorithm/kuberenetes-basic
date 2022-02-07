@@ -372,7 +372,270 @@ minikube addons list
 
 #To enable ingress
 minikube addons enable ingress
+* Verifying ingress addon...
+* The 'ingress' addon is enabled
 ```
 The above command should have spun up an Ingress Controller as another pod. To confirm this, run ***kubectl get po --all-namespaces***
 
 ### Creating an Ingress resource
+Now, you can create an Ingress resource:
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: migo-ingress
+spec:
+  rules:
+  - host: migo.example.com # This maps "migo.example.com" domain name to your service
+    http: 
+      paths:
+        - path: /          # All requests will be sent to port 80 of migo-nodeport service
+          pathType: Exact  # or Prefix
+          backend:
+            service:
+              name: migo-nodeport
+              port: 
+                number: 80
+```
+Above menifest defines an Ingress with a single rule, which makes sure all HTTP requests will be sent to "migo-nodeport" service on port 80. 
+
+### Accessing the service through the Ingress
+To access your service, you'll ened to make sure the domain name resolves to the IP of the Ingress controller. To look up the IP of ingress, you need to list them first:
+```sh
+kubectl get ingresses
+NAME           CLASS   HOSTS              ADDRESS     PORTS   AGE
+migo-ingress   nginx   migo.example.com   localhost   80      2m27s
+
+#To configure DNS servers, IP must ve IPv4 form. So,
+minikube ip
+192.168.49.2
+
+#resolve 192.168.49.2 to migo.example.com
+sudo echo "192.168.49.2 migo.example.com" >> /etc/hosts
+
+curl migo.example.com
+You hit migo-deployment-cc4c757f6-2mpxm
+
+curl migo.example.com
+You hit migo-deployment-cc4c757f6-fffcr
+
+curl migo.example.com
+You hit migo-deployment-cc4c757f6-fffcr
+```
+
+### How Ingresses works?
+![image info](./how-ingress-works.png)
+As you can see, the Ingress controller didn't forward the request to the service. It only used it to select a pod. Most controllers work like this.
+
+### Exposing multiple services through the same Ingress
+Looking at Ingress spec closely, you can see that both *rules* and *paths* are arrays, meaning they can contain multiple items. An Ingress can map multiple hosts and paths to multiple services. Let's focus on *paths* first.<br><br>
+
+***Mapping different services to different paths of the same host***
+```yaml
+    - host:
+      http:
+        paths:
+          - path: /foo          # All requests will be sent to port 80 of migo-nodeport service
+            pathType: Exact  # or Prefix
+            backend:
+              service:
+                name: migo-nodeport
+                port: 
+                  number: 80
+          - path: /bar
+            pathType: Exact
+            backend:
+              service:
+                name: migo-nodeport2
+                port:
+                  number: 80
+```
+In this case, requests will be sent to two different services, depending on the path in the requests URL. Clients can therefore reach two different services through a single IP address.<br><br>
+
+***Mapping different services to different hosts***
+```yaml
+spec:
+  rules:
+    - host: foo.example.com
+      http:
+        paths:
+          - path:
+            pathType: Exact
+            backend:
+              service:
+                name: myservice1
+                port:
+                  number: 6379
+    - host: bar.example.com
+      http:
+        paths:
+          - path:
+            pathType: Exact
+            backend:
+              service:
+                name: myservice2 
+                port: 9092
+```
+
+### Configuring Ingress to handle TLS traffic
+What about HTTPS? let's see how to configure Ingress to support TLS.<br>
+When a client opens a TLS connection to an Ingress controller, the controller terminates the TLS connection. While communication between client and controller is encrypted, that between controller and backend pod is not encrypted because they don't need to support TLS. It means that when a pod runs a web server, it can accept only HTTP traffic and *let Ingress controller take care of everything related to TLS.* To do that, you need to attatch certificate and private key to the Ingress:
+```sh
+#create key
+openssl genrsa -out tls.key 2048
+
+#create certificate
+openssl req -new -x509 -key tls.key -out tls.cert -days 360 -subj /CN=migo.example.com
+
+#Create Secret resource from the above two files.
+kubectl create secret tls tls-secret --cert=tls.cert --key=tls.key
+```
+Now, the private key and the certificate are stored in the Secret called *tls-secret*(We will discuss Secret object in the different chapter.) Let's update Ingress object so it also accepts HTTPS requests:
+```yaml
+apiVErsion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: migo-ingress
+spec:
+  tls:                           # the whole TLS configuration is under this
+    - hosts:
+        - migo.example.com
+      secretName: tls-secret     # Name of the Secret object
+  rules:
+    - host: migo.example.com
+      http:
+        paths:
+          - path:
+            pathType: Exact
+            backend: 
+              service:
+                name: myservice
+                port:
+                  number: 2181
+```
+
+## Signaling when a pod is ready to accept connections : readiness probe
+What is going to happen if a pod isn't ready to start serving requests immediately but it has already become a part of service? Pods need to take some time to load configuration, data or to perform warm-up procedure. It makes a lot of sense not to forward requests to a pod that's in the process of starting up until it's fully ready.<br>
+
+### Readiness probes
+K8S allows you to also define a readiness probe for your pod which is invoked periodically. When it returns success, it's a sign of being ready. It could merely be sending GET request or hit specific URL path. Detailed readiness probe is the app developer's responsibility. However, in general, there are three types of readiness probes:
+- Exec
+- HTTP GET
+- TCP 
+
+### How to operate readiness probe
+K8S can be configured to wait for a configurable amount of time before sending the first readiness check. If a pod reports that it's not ready, *it's removed from the service*. Unlike liveness check, readiness probe doesn't kill or replace containers. Instead, it makes sure only pods that are ready receive traffics.
+
+### Adding a readiness probe to the pod template
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: migo-deployment
+spec:
+  replica: 3
+  selector:
+    matchLabels:
+      pod: migo-pod
+  template:
+    metadata:
+      name: migo-pod
+      labels:
+        pod: migo-pod
+    spec:
+      containers:
+        - image: saka1023/k8s
+          readinessProbe:       #Can be defined for each container in a pod
+            exec:
+              command:          #This will be executed periodically
+                - ls
+                - /var/ready    #If exists, exit code - 0. Otherwise, non-zero.
+          name: migo-con
+          ports:
+            - containerPort: 8080
+```
+<br><br>
+
+Now let's toggle readiness by creating or deleting /var/ready
+```sh
+kubectl get po
+NAME                              READY   STATUS    RESTARTS   AGE
+migo-deployment-cc4c757f6-2mpxm   1/1     Running   0          2d1h
+...
+migo-deployment-f96b87775-9z76q   0/1     Running   0          81s
+
+#create 
+kubectl exec -it migo-deployment-f96b87775-9z76q -- touch /var/ready
+
+kubectl get po
+NAME                              READY   STATUS              RESTARTS   AGE
+migo-deployment-cc4c757f6-2mpxm   1/1     Terminating         0          2d1h
+...
+migo-deployment-f96b87775-9z76q   1/1     Running             0          3m4s
+migo-deployment-f96b87775-b8zt5   0/1     ContainerCreating   0          3s
+```
+You guess what's gonna happen if you run command ***"kubectl exec -it migo-deployment-cc4c757f6-2mpxm -- rm /var/ready".*** Plus, bear in mind that the interval is set 10 seconds by default. 
+
+### Real-world readiness probes
+You MUST:
+- define a readiness probe. Otherwise, pods will be service endpoints almost immediately, resulting in "Connection refused" type of errors.
+- NOT include pod shotdown logic into your readiness probes.
+
+## Using a headless service for discovering individual pods
+We've seen how service can provide stable IP address. Upon being connected, Service forward connection to one ***randomly*** selected backing pod. But what if the client needs to connect to all of those pods? What if the backing pods themselves need to each connect to all the other backing pods? For a client to connect to all pods, *it needs to figure out the IP of each individual pod.* There are several ways:
+- Have the client call K8S server and gets the list of pods - but because you should always stribe to keep your apps *Kubernetes-agnostic*, it doesn't sound idea. 
+- Allow clients to discover pod IPs through DNS lookups. If you tell kubernetes you don't need a clusterIP for your service by setting *clusterIP* to *None*, teh DNS server will return the pod IPs instead of single service IP. 
+
+### Creating a headless service
+Setting the clusterIP to None makes the service ***headless.***:
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: migo-headless
+spec:
+  clusterIP: None # This makes the service headless
+  ports:
+    - port: 80
+      targetPort: 8080
+  selector:
+    app: migo-pod
+```
+Let's see headless service in detail:
+```sh
+kubectl describe svc migo-headless
+Name:              migo-headless
+Namespace:         default
+...
+Selector:          pod=migo-pod
+Type:              ClusterIP
+IP Family Policy:  SingleStack
+IP Families:       IPv4
+IP:                None
+IPs:               None
+Port:              <unset>  80/TCP
+TargetPort:        8080/TCP
+Endpoints:         172.17.0.4:8080,172.17.0.5:8080
+Session Affinity:  None
+Events:            <none>
+```
+You see it has no clusterIP and its endpoints include "part of" pods matching its pod selector. Why "part of"? because your pods now contain a readiness probe, so only pods that are ready will be listed.
+
+### Discovering pods through DNS
+You can now try performing a DNS lookup. But, your container doesn't include the *nslookup* binary, so you can't use it to perform the DNS lookup. So why not run a new pod based on an image that contains the binaries you need? To perform DNS-related actions, you can use tutum/dnsutils container image that's available on DockerHub.
+But, Certainly, you don't want to create YAML file and pass it to k8s; no worries, there is a faster way:
+```sh
+#Createe pod
+kubectl run dnsutils --image=tutum/dnsutils --command -- sleep infinity
+pod/dsutils created
+
+#nslookup
+kubectl exec dnsutils -- nslookup migo-headless
+Server:         10.96.0.10
+Address:        10.96.0.10#53
+
+Name:   migo-headless.default.svc.cluster.local
+Address: 172.17.0.5
+```
+Address shown above is the IP of the pod that are reporting being ready. Although headless service may seem different from regular services, they're not that different from the client's perspective. Interestingly, even with a headless service, ***clients can conenct to its pods by connecting to the service's DNS name***. as they can with regular services.<br>
+  ***Note*** that headless service still provides load-balancing across pods but through the DNS round-robin mechanism.
+
