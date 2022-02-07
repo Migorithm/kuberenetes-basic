@@ -9,7 +9,7 @@ Imagine you have the following containers:
 - Agent process that creates HTML and store them in /var/html
 - Log-processing container that takes logs from /var/logs directory.
 Creating a pod with these three containers without them sharing disk storage doesn't make any sense. But if you somehow add two volumes to the pod and *mount* them at appropriate paths, you can create system that's much more than the sum of its parts. 
-![](./volume.png =250x) <br><br>
+<img src="volume.png" width="200">) <br><br>
 By mounting the same volume into two containers, they can operate on the same files. Let me explain how:
 - First, the pod has a volume called *publicHtml* mounted in the WebServer container at /var/htdocs
 - The same volume is mounted in the ContentAgent container, but at /var/html
