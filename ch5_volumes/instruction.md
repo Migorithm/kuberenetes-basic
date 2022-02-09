@@ -142,4 +142,26 @@ If you don't set the directory to '.',  the repository will clone into *migo-dir
 A sidecar container is a container that augments the operation of the main container of the pod. You basically add a sidecar to a pod so you can use an existing container image instead of cramming additional logic into the main app's code. To find an existing container image, which keeps a local directory synchronized with a Git repository, go to Docker Hub and search for ***"git sync"***<br>
 
 #### Using a gitRepo volume with private Git repositories
-There is one other reason for having to resort to Git sync sidecar containers; you can't use a *gitRepo* with a private Git repo. If you want to clone a private Git repo into your container, you should use a git-sync sidecar or a similar method instead of a *gitRepo* volume
+There is one other reason for having to resort to Git sync sidecar containers; you can't use a *gitRepo* with a private Git repo. If you want to clone a private Git repo into your container, you should use a git-sync sidecar or a similar method instead of a *gitRepo* volume<br>
+
+## Accessing files on the worker node's filesystem
+Most pods should be oblivious of their host node, so they shouldn't access any files on the node's filesystem. But certain system-level pods do need to either read the node's files or use the node's filesystem. For this, you use *hostpath* volume. Technically, this is the first type of persistent storage we're introducing, because it's not tied to pod. If a pod is torn down and the next pod uses *hostPath* volume, they will see whatever was left behind the previoud pod, ***if and only if*** it's scheduled to the same node as the first one. Should you think of using *hostPath* volume for database's data directory, think again. 
+
+### Examining system pods that use hostPath volumes
+Intead of creating a new pod, let's see if any existing system-wide pods are already using this type of volume. 
+```sh
+kubectl get pods --namespace kube-system
+NAME                               READY   STATUS    RESTARTS      AGE
+kube-apiserver-minikube            1/1     Running   0             14d
+
+#Let's pick the first one.
+kubectl describe po kube-apiserver-minikube --namespace kube-system
+...
+...
+Volumes:
+  ca-certs:
+    Type:          HostPath (bare host directory volume)
+    Path:          /etc/ssl/certs
+    HostPathType:  DirectoryOrCreate
+```
+The pod uses *hostPath* volumes to gain access to the node's /etc/ssl/certs. You'll see most use this type of volume either to access the node's log files, kubeconfig, or the CA certificates. Remember, you want to use *hostPath* only if you need to read or write system-files on the node. Never use them to persist data across pods.
