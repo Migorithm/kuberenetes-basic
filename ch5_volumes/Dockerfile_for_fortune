@@ -1,0 +1,6 @@
+FROM ubuntu:latest
+RUN apt-get update; apt-get -y install fortune
+WORKDIR /usr/app
+ADD ./fortuneloop.sh ./fortuneloop.sh
+RUN chmod +x fortuneloop.sh
+ENTRYPOINT ["/usr/app/fortuneloop.sh"]

@@ -268,3 +268,141 @@ NAME            READY   STATUS    RESTARTS   AGE
 rc-prac-8j78z   1/1     Running   0          4d21h
 rc-prac-kv2pg   1/1     Running   0          4d21h
 rc-prac-shzkr   1/1     Running   0          4d21h
+
+# certain key with the value not matched
+kubectl get po -l rel!=beta
+NAME              READY   STATUS    RESTARTS   AGE
+kubia-manual-v2   1/1     Running   0          15m
+rc-prac-8j78z     1/1     Running   0          4d21h
+rc-prac-kv2pg     1/1     Running   0          4d21h
+rc-prac-shzkr     1/1     Running   0          4d21h
+
+# in
+kubectl get po -l 'rel in (alpha,beta)' 
+NAME              READY   STATUS    RESTARTS   AGE
+kubia-manual-v2   1/1     Running   0          16m
+
+# not in 
+kubectl get po -l 'rel notin (alpha,beta)'
+NAME            READY   STATUS    RESTARTS   AGE
+rc-prac-8j78z   1/1     Running   0          4d21h
+rc-prac-kv2pg   1/1     Running   0          4d21h
+rc-prac-shzkr   1/1     Running   0          4d21h
+```
+
+## Using labels and selectors to constrain pod scheduling
+Normally, we don't contrain pods from scheduling randomly.<br>
+Certain cases exist, however, where you want to have at least a little say in where<br>
+a pod should be scheduled. For example: 
+- when your hardware infra isn't homogenous.
+- when you need to schedule pods performing intensive GPU-based computation only to nodes that provide the required GPU acceleration.
+How it's done? It's through ***node labels***.
+
+### Using labels for categorizing worker nodes.
+Labels can be attached to any K8S object including nodes. When ops team adds a new node,<br>
+they usually categorize the node by attaching labels specifying the type of hardware.<br>
+You can do the simiar things by:
+```sh
+kubectl label node minikube-worker gpu=true
+```
+
+### Scheduling pods to specific nodes
+The following menifest will give you a sense. 
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-intenstive
+spec:
+  nodeSelector:
+    gpu: "true"
+  containers:
+    - image: saka1023/k8s
+      name: migo
+```      
+
+## Using namespaces to group resources
+Each obejct can have multiple labels. It means those groups of objects can overlap.<br>
+Working with the cluster, if you don't specify a lable selector, you'll always see all objects.<br>
+But what about times when you want to split objects into separate, non-overlapping groups?<br>
+You may want to only operate inside one group at a time. For this, K8S groups objects into namespaces. <br>
+However, don't mistake this for Lunux namespaces. Kubernetes namespaces provide a scope for objects names.<br>
+
+### Discovering other namespaces and their pods
+First, let's list all namespaces in your cluster:
+```sh
+kubectl get ns
+NAME                   STATUS   AGE
+default                Active   8d
+kube-public            Active   8d
+kube-system            Active   8d
+```
+Up to this point, you've operated only in the ***default*** namespace. <br>
+But as you can see from the list, ***kube-public*** and ***kube-system*** also exist.<br>
+Let's look at tehe pods that belong to the ***kube-system***:
+```sh
+kubectl get po --namespace kube-system
+NAME                               READY   STATUS    RESTARTS     AGE
+coredns-64897985d-vfq8f            1/1     Running   0            8d
+etcd-minikube                      1/1     Running   0            8d
+kube-apiserver-minikube            1/1     Running   0            8d
+...
+
+```
+***TIP*** You can also use *-n* instead of *--namespace* <br><br>
+
+If several users or groups of users are using the same Kubernetes cluster, and they<br>
+each manage their own distinct set of resources, they should each use their own namespace.<br>
+This way, you get the following benefits: 
+- No need to take any special care not to inadvertently modify or delete other users' resources. 
+- You are able to allow only certain users to have access to particular resources. 
+  - You will learn this in chapter 11 through 13.
+
+### Creating a namespace
+A namespace is a Kubernetes resource like any other, so you can create it by posting a YAML file: 
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: custom-namespace
+```
+
+Apply the above menifesto
+```sh
+kubectl apply -f custom-namespace.yaml
+namespace "custom-namespace" created
+```
+
+### Managing objects in other namespaces
+To create resources in the namespace you've created, either:
+- add a ***namespace: custom-namespace*** entry to the ***metadata*** section or
+- specify the namespace when creating the resource with the ***kubectl apply*** command.
+```sh
+kubectl apply -f menifesto.yaml -a custom-namespace
+```
+
+***TIP!***  To quickly switch to a different namespace, apply :
+```sh
+alias kcd='kubectl config set-context $(kubectl config current-context) --namespace'
+```
+Then you can switch between namespaces using ***kcd some-namespace***.<br>
+
+## Stopping and removing pods
+### Deleting a pod by name
+```sh
+kubectl delete po <pod_name>
+```
+By deleting a pod, you're instructing Kubernetes to send a *SIGTERM* signal to the process<br> and wait a certain number of seconds(30 by default) for it to shut down *gracefully*.<br>
+If it doesn't shut down in time, the process is then killed through *SIGKILL*. 
+
+### Deleting pods using label selectors
+```sh
+kubectl delete po -l key=value
+```
+
+### Deleting pods by deleting the whole namespace
+If you delete a namespace, the pods within that namespace will be deleted too. 
+```sh
+kubectl delete ns custom-namespace
+namespace "custom-namespace" deleted
+```
