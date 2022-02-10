@@ -65,6 +65,9 @@ spec:
         httpGet:
           path: /        # The path to request in the HTTP request
           port: 8080     # The network port the probe should connect to 
+        initialDelaySeconds: 15
+        periodSeconds: 5
+        timeoutSeconds: 5
 ```
 
 ### Seeing a liveness probe in action
@@ -152,7 +155,7 @@ kind: ReplicationController
 metadata:
   name: migo-rc
 spec:
-  replica: 1
+  replicas: 1
   selector:         # The pod selector determining what pods the RC is operating on
     app: migo-pod
   template:
@@ -181,7 +184,7 @@ Kubenetes allows you to change ReplcationController's label selector, but that's
 ### Deleting replication controller
 When you delete a RC through *kubetl delete*, the pods are also deleted. But as Pods itself are not an integral part of ReplicationController, you can delete only the RC and leave the pods running. This may be useful when replacing Controller with another one.
 ```sh
-kubectl delete rc "rc_name" --cascade=false
+kubectl delete rc "rc_name" --cascade=orphan
 ```
 
 ## Using ReplicaSet instaed of ReplicationControllers
