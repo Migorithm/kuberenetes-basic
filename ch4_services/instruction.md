@@ -400,7 +400,7 @@ spec:
 Above menifest defines an Ingress with a single rule, which makes sure all HTTP requests will be sent to "migo-nodeport" service on port 80. 
 
 ### Accessing the service through the Ingress
-To access your service, you'll ened to make sure the domain name resolves to the IP of the Ingress controller. To look up the IP of ingress, you need to list them first:
+To access your service, you'll need to make sure the domain name resolves to the IP of the Ingress controller. To look up the IP of ingress, you need to list them first:
 ```sh
 kubectl get ingresses
 NAME           CLASS   HOSTS              ADDRESS     PORTS   AGE
@@ -582,8 +582,8 @@ You MUST:
 
 ## Using a headless service for discovering individual pods
 We've seen how service can provide stable IP address. Upon being connected, Service forward connection to one ***randomly*** selected backing pod. But what if the client needs to connect to all of those pods? What if the backing pods themselves need to each connect to all the other backing pods? For a client to connect to all pods, *it needs to figure out the IP of each individual pod.* There are several ways:
-- Have the client call K8S server and gets the list of pods - but because you should always stribe to keep your apps *Kubernetes-agnostic*, it doesn't sound idea. 
-- Allow clients to discover pod IPs through DNS lookups. If you tell kubernetes you don't need a clusterIP for your service by setting *clusterIP* to *None*, teh DNS server will return the pod IPs instead of single service IP. 
+- Have the client call K8S server and gets the list of pods - but because you should always strive to keep your apps *Kubernetes-agnostic*, it doesn't sound ideal. 
+- Allow clients to discover pod IPs through DNS lookups. If you tell kubernetes you don't need a clusterIP for your service by setting *clusterIP* to *None*, the DNS server will return the pod IPs instead of single service IP. 
 
 ### Creating a headless service
 Setting the clusterIP to None makes the service ***headless.***:
@@ -624,7 +624,7 @@ You see it has no clusterIP and its endpoints include "part of" pods matching it
 You can now try performing a DNS lookup. But, your container doesn't include the *nslookup* binary, so you can't use it to perform the DNS lookup. So why not run a new pod based on an image that contains the binaries you need? To perform DNS-related actions, you can use tutum/dnsutils container image that's available on DockerHub.
 But, Certainly, you don't want to create YAML file and pass it to k8s; no worries, there is a faster way:
 ```sh
-#Createe pod
+#Create pod
 kubectl run dnsutils --image=tutum/dnsutils --command -- sleep infinity
 pod/dsutils created
 
