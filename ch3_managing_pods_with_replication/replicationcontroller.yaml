@@ -4,7 +4,7 @@ metadata:
   name: migo-rc
 spec:
   replica: 1
-  selector:        
+  selector:         # The pod selector determining what pods the RC is operating on
     app: migo-pod
   template:
     metadata:

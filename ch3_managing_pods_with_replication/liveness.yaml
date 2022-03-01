@@ -8,8 +8,8 @@ spec:
       name: migo-liveness
       livenessProbe:
         httpGet:
-          path: /        
-          port: 8080     
-        initialDelaySeconds: 15
+          path: /
+          port: 8080
         periodSeconds: 5
         timeoutSeconds: 5
+        initialDelaySeconds: 15 
