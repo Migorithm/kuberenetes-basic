@@ -720,3 +720,275 @@ You don't want the containers to be different to each other as at the heart of c
 Main problem occurs when the app doesn't support reloading its configuration. This results in different running instances being configured differently.<br><br>
 
 Therefore, if the app doesn't reload its config automatically, modifying an existing ConfigMap may not be a good idea. If the app does support reloading, modifying the ConfigMap usually isn't such a big deal, but you need to be aware that the files in individual pods may out of sync for up to a whole minute as files in the configMap volumes are not updated synchonously. 
+
+## Using Secrets to pass sensitive data to containers
+Config usually includes sensitive information, such as credentials and private encryption keys which need to be kept secure. 
+
+### Introducing Secrets 
+Secrets are a different type of object in K8s and it behaves much like ConfigMaps - they're also maps that hold key-value pairs. You can:
+- pass Secret entries to the container as **environment variables**.
+- expose Secret entries to files **in a volume**. 
+<br>
+
+Kubernetes keeps your Secret by making sure each Secret is only distributed to the nodes that run the pods that need access to the Secret. Plus, **Secret are always stored in memory on the nodes** and never written to physical storage.<br><br>
+
+On top of that, from K8s version 1.7 etcd(in master node) stores Secret in encrypted form, making the system much more secure. Because of this, it's imperative you properly choose when to use a Secret or a ConfigMap. Criteria would be:
+- Use a ConfigMap to store non-sensitive, plain configuration data. 
+- Use a Secret to store any data that is sensitive in nature. 
+- If a config file includes both sensitive and non-sensitive data, you should store them in a Secret. 
+
+### Introducing the default token Secret
+When using "kubectl describe" on a pod, the command's output always contains something like this:
+
+  Volumes:
+    default-token-cfee9:
+      Type:       Secret(a volume populated by a Secret)
+      SecretName: default-token-cfee9
+
+Every pod has a **secret** volume attached to it automatically. Because Secrets are resources, you can list them with "kubectl get secrets" and find the default-token Secret in that list.<br><br>
+
+And "kubectl describe pod" command will show you where the secret volume is mounted:
+
+  Mounts:
+    /var/run/secrets/kubernetes.io/serviceaccount from default-token-cfee9
+
+Note that by default, the **default-token** Secret is mounted into every container, but you can disable that in each pod by setting **automountService-AccountToken** field in the spec to **false**.<br><br> 
+
+We've said Secrets are like ConfigMaps, so if the Secret contains three entries, you can expect to see three files in the directory the **secret volume** is mounted into. Let's check that:
+```sh
+kubectl exec your_pod_name ls /var/run/secrets/kubernetes.io/serviceaccount/
+```
+You will see how your app can use these files to access the API server in the next chapter. 
+
+### Creating a Secret
+You'll improve your fortune-serving Nginx container by configuring it to also serve HTTPS traffic. For this, you need to create a certificate and a private key. First, generate the certificate and private key files:
+```sh
+#Create private key
+$ openssl genrsa -out https.key 2048  #https.key -> name of the key
+
+#Create csr(certificate signing request)
+$ openssl req -new -x509 -key https.key -out https.cert -days 3650 -subj /CN=www.migo.com
+#This command use your private key file(-key https.key) to create a new csr(-out https.cert) and
+#disable question prompts by prodiving csr information(-subj)
+```
+
+Now to help better demonstrate a few things about Secrets, create an additional dummy file called foo and make it contain the string bar. 
+
+```sh
+$ echo bar > foo
+```
+
+Now you can use **"kubectl create secret"** to create a Secret from the tree files:
+```sh
+$ kubectl create secret generic fortune-https --from-file=https.key --from-file=https.cert --from-file=foo
+secret "fortune-https" created
+```
+In this case, you're creating a generic Secret called **fortune-https** and including https.key and https.cert. As you learned earlier, you could also include the whole directory with **"--from-file=fortune-https"** instead of specifying each file individually.
+
+### Comparing ConfigMaps and Secrets 
+They have a pretty big difference. In fact, this is what drove developers to create ConfigMaps after Kubernetes had already supported Secrets for a while. See the following:<br>
+*kubectl get secret fortune-https -o yaml"*:
+```yaml
+apiVersion: v1
+data:
+  foo: YmFyCg==
+  https.cert: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCekNDQ...
+  https.key: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcE...
+kind: Secret
+...
+```
+<br>
+
+Now, compare this to the YAML of the ConfigMap you created earlier:<br>
+*kubectl get configmap fortune-config -o yaml*:
+```yaml
+apiVersion: v1
+data:
+  my-nginx-config.conf: |
+    server {
+    ... 
+    }
+  sleep-interval: |
+    25
+kind: ConfigMap
+...
+```
+Notice the difference? The **contents of a Secret's entries are shown as Base64-encoded strings, whereas those of a ConfigMap are shown in clear text.**<br><br>
+
+#### Using Secrets For Binary Data
+The reason for using Base64 encoding is sipmle. A Secret's entries can contain binary values, not only plain-text. Base64 encoding allows you to include the binary data in YAML or JSON, which are both plain-text formats. Bear in mind that you can use Secret even for non-sensitive binary data, but be aware that **the maximum size of Secret is limited to 1MB**.
+
+#### Introducing stringData Field
+Because not all sensitive data is in binary form, K8s also allows setting a Secret's value through the ***stringData*** field: 
+
+```yaml
+apiVersion: v1
+kind: Secret
+stringData: #The stringData field can be used for non-binary Secret data.
+  foo: plain text
+data:
+  https.cert: Ls0 ....
+  https.key: LS0tLs....
+```
+The stringData field is **write-only**(not read only). It can only be used to set values. When you retrieve the YAML through "-o yaml", the stringData field will not be shown. Instead, that will be shown under **data** field and will be Base64-encoded. <br>
+
+#### Reading A Secret's Entry in a Pod
+When you expose the Secret to a container through a secret volume, **the value of the Secret entry is decoded** and written to the file in its actual form. The same is also true when exposing the Secret entry through an environment variable. <br><br>
+
+  Q. They said they store Secret on memory. But then if Secret entry is decoded and written to the file, doesn't it contradict what it said? 
+
+### Using the Secret in a Pod
+Now, we have fortune-https Secret that contains both cert and key files. All you nedd to do now is configure Nginx to use them. 
+
+#### Modifying the fortune-config configMap to enable HTTPS
+*kubectl edit configmap fortune-config*
+```yaml
+...
+data:
+  my-nginx-config.conf: |
+    server {
+      listen                80;
+      listen                443 ssl;
+      server_name           www.migo.com;
+      ssl_certificate       certs/https.cert;
+      ssl_certificate_key   certs/https.key;
+      ssl_protocols         TLSv1 TLSv1.1 TLSv1.2;
+      ssl_ciphers           HIGH: !aNULL: !MD5;
+
+      location  / {
+        root    /usr/share/nginx/html;
+        index   index.html index.htm;
+      }
+    }
+  sleep-interval: |
+    25
+...
+```
+This configures the server to read the certificate and key files from /etc/nginx/certs, so you'll need to mount the secret volume there. 
+
+#### Mounting The fortune-https Secret into a Pod
+You'll create a new fortune-https pod and mount the secret volume holding the certificate and key into the proper location in the web-server container.<br>
+*fortune-pod-https.yaml*:
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune-https
+spec:
+  containers:
+    - image: saka1023/fortune:env
+      name: html-generator
+      env:
+        - name: INTERVAL
+          valueFrom:
+            configMapKeyRed:
+              name: fortune-config
+              key: sleep-interval
+      volumeMounts:
+        - name: html
+          mountPath: /var/htdocs
+    
+    - image: nginx:alpine
+      name: web-server
+      volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+          readOnly: true
+        - name: config
+          mountPath: /etc/nginx/conf.d
+          readOnly: true
+        - name: certs                  #Configure Nginx to read the cert and key from 
+          mountPath: /etc/nginx/certs/ # this path
+          readOnly: true
+      ports:
+        - containerPort: 80
+          containerPort: 443
+  volumes:
+    - name: html
+      emptyDir: {}
+    - name: config
+      configMap:
+        name: fortune-config
+        items:  #Only certain file 
+          - key: my-nginx-config.conf ## You want the entry under this key included
+            path: https.conf          # But it would be stored under this name
+    - name: certs
+      secret:
+        secretName: fortune-https
+```
+The following figure shows he components defined in the YAML. <br>
+
+<img src="config_secret_combined.png">
+
+<br>
+
+Note that just like configMap volumes, secret volumes also support specifying file permissions for the file exposed in the volume through defaultMode property.<br>
+
+#### Testing whether Nginx is using the cert and key from the Secret 
+```sh
+kubectl port-forward fortune-https 8443:443 &
+
+curl https://localhost:8443 -k (-v)
+```
+
+#### Understanding Secret volumes are stored in memory
+The secret volume uses an in-memory filesystem(tmpfs) for the Secret files. You can see this if you list mounts in the container:
+```sh
+kubectl exec fortune-https -c web-server -- mount | grep certs
+tmpfs on /etc/nginx/certs type tmpfs (ro,relatime)
+```
+<br>
+
+Because tmpfs is used, the sensitive data stored in the Secret is never written to disk. 
+
+#### Exposing A Secret's entries through environment variables
+Instaed of using volumes, you could also have exposed individual entries from the secret as environment variables. For example, if you wanted to expose "foo" key as "FOO_SECRET", you'd add the snippet from the following listing to the container definision:
+
+```yaml
+  env:
+    - name: FOO_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: fortune-https #name of the secret holding the key
+          key: foo            #key of the secret to expose
+```
+
+Even though k8s enables you to expose Secret through environment variable, it may not be the best idea to use this feature because applictions usually dump environment variables in error reports or even write them to the application log at startup, resulting in secret inadvertently being exposed. 
+
+<br>
+
+### Understanding Image pull secrets
+Aside from passing Secrets to your application, sometimes Kubernetes itself requires you to pass credentials to it - for example, when you have to use images from a private container image registry. Not surprisingly this is also done throug Secrets.<br><br>
+
+#### Using a private image repository on Docker Hub
+You can mark a repository as private one by logging in at http://hub.docker.com and check a checkbox.<br>
+To run a pod which uses an image from the private repository, you need to do two things:
+- Create a Secret holding the credentials for the Dokcer registry.
+- Reference that Secret in the imagePullSecrets field of the pod manifest 
+<br>
+
+#### Creating a Secret for Authenticating with a Docker Registry
+Creating a Secret is not that different from creating generic secret except for the type you use:
+```sh
+$ kubectl create secret docker-registry mydockerhubsecret --docker-username=username --docker-password=password --docker-email=my_email@domain.com
+```
+<br>
+
+If you inspect the contents of the Secret with "describe", you'll see it includes a single entry called **.dockercfg** that is equivalent to the .dockercfg file in your home directory, which is created when you run the docker login command.
+
+#### Using the Docker-Registry Secret in a Pod definition
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: private-pod
+spec:
+  imagePullSecrets:
+    - name: mydockerhubsecret #This enables pulling images froma private image registry
+  containers:
+    - image: username/image:tag
+      name: whatever
+```
+
+#### Not having to specify imagePullSecrets on every pod
+You may wonder if you need to add the same "imagePullSecrets" on every pod definition. Luckily, that's not the case. You'll learn how image pull Secrets can be added to all your pods automatically in later chapter(ch.12) by using ServiceAccount.
