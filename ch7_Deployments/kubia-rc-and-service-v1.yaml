@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: migo-v1
+spec:
+  replicas: 3
+  template:
+    metadata:
+      name: migo
+      labels:
+        app: migo
+    spec:
+      containers:
+        - image: saka1023/node_app:v1
+          name: migo-con
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: migo
+spec:
+  type: LoadBalancer
+  selector:
+    app: migo
+  ports:
+    - port: 80
+      targetPort: 8080
