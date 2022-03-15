@@ -31,7 +31,7 @@ This is called a ***blue-green deployment.***
     You can change a Service's pod selector with the "kubectl set selector"
 
 
-#### Rolling update using two ReplicationControllers
+#### Rolling update using two ReplicationControllers(Deprecated completely)
 <img src="rolling_update_with_two_rc.png"><br><br>
 
 
@@ -67,3 +67,21 @@ spec:
       targetPort: 8080
 ```
 Go ahead and post the YAML to k8s. Note that if you use LoadBalancer in Minikube, use "minikube tunnel" command.<br>
+
+Now you'll create version 2 of the app. For that, all you need to do is change the response to say, "This is v2".
+
+```js
+const http = require("http");
+const os = require("os");
+console.log("Kubia server starting...");
+
+var handler = function(request,response){
+    console.log("Received request from "+ request.connection.remoteAddress);
+    response.writeHead(200);
+    response.end("This is v2 running in pod "+ os.hostname() + "\n")
+}
+
+var www = http.createServer(handler);
+www.listen(8080);
+```
+
