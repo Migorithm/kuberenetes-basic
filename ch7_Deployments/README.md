@@ -328,3 +328,102 @@ It's important to keep in mind that **maxUnavailable** is relative to the desire
 This means that the update process must always keep at least two( 3 minus 1 ) pods available. 
 
 ### Pausing the rollout process
+After the bad experience with version 3 of your app, imagine you've now fixed the bug and pushed version 4. But still, you're little apprehensive about rolling it out across all your pods the way you did before. What you want is to run a single v4 pod next to your existing v2 pods and see how it behaves with only a fraction of all your users.<br><br>
+
+Deployment can also be paused during the rollout process. Doing so allows you to verify that everything is fine with the new version before preceeding with the rest of the rollout. 
+
+#### Pausing the rollout
+v4:
+```js
+const http = require('http');
+const os = require('os');
+
+console.log("Kubia server starting...");
+
+var handler = function(request, response) {
+  console.log("Received request from " + request.connection.remoteAddress);
+  response.writeHead(200);
+  response.end("This is v4 running in pod " + os.hostname() + "\n");
+};
+
+var www = http.createServer(handler);
+www.listen(8080);
+```
+
+```Dockerfile
+FROM node:7
+ADD app.js /app.js
+ENTRYPOINT ["node", "app.js"]
+```
+
+```sh
+#Change image
+kubectl set image deployment migo noddejs=saka1023/node_app:v4
+
+#Pause
+kubectl rollout pause deployment migo
+```
+Once the new pod is up, a part of all requests to the service will be redirected to the new pod. This way, you've effectively run a canary release.
+
+#### Resuming the rollout
+```sh
+kubectl rollout resume deployment migo
+```
+
+However, Obviously, having to pause the deployment at an exact point in the rollout process isn't what you want to do. The proper way of performing a canary release is by using two different Deployments and scaling them appropriately. 
+
+### Blocking rollouts of bad versions
+Remember the **minReadySeconds** property? The main function of minReadySeconds is to prevent deploying malfunctioning versions, not slowing down a deployment for fun. 
+
+#### Understanding the applicability of minReadySeconds
+The minReadySeconds property specifies how long a newly created pod should be ready before the pod is treated as available. A pod is ready when **readiness probes** of all its containers returns a success. If a new pod isn't functioningand its readiness probe starts failing before minReadySeconds have passed, the rollout of the new version will be blocked.<br><br>
+
+Usually, minReadySeconds should be long enough to make sure of the readiness. 
+
+#### Defining a readiness probe to prevent out v3 version from being rolled out fully.
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: 
+  name: migo
+spec:
+  replicas: 3
+  minReadySeconds: 10
+  selector:
+    matchLabels:
+      app: migo
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0 # one by one
+    type: RollingUpdate
+  template:
+    metadata:
+      name: migo
+      labels:
+        app: migo
+    spec:
+      containers:
+        - image: saka1023/node_app:v3
+          name: nodejs
+          readinessProbe:
+            periodSeconds: 1
+            httpGet:          #What if we need https? 
+              path: /
+              port: 8080
+```
+
+```sh
+kubectl apply -f deployemnt_descriptor_name
+
+kubectl rollout status deployment migo
+
+while true; do curl http://external_ip ;  done
+```
+
+You'll never hit v3 pod. As the pod with v3 image won't be shonw as ready. The following describes what happened.<br>
+<img src="readiness.png"><br><br>
+
+With the readiness probe in place, there was virtuall no negative impact on your users. A few users may have experienced the internal server error, but that's not as big of a problem as if the rollout had replaced all pods with the faulty version 3. <br><br>
+
+If you only define the readiness probe without setting minReadySeconds properly, new pods are considered available immediately when the first invocation of the readiness probe succeeds. Therefore you should set minReadySeconds properly. 
