@@ -74,3 +74,46 @@ Note that StatefulSets scale down only one pod instance at a time in case distri
 For the same erason, StatefulSet also never permit scale-down operations if any of the instances are unhealthy.
 
 ### Providing stable dedicated storage to each stateful instance
+Now you've seen how to ensure stateful pods have a stable identity. But what about storage?<br>
+Because PersistentVolumeClaims(PVCs) map to PersistentVolumes(PVs) one-to-one,<br>
+each pod of a StatefulSet needs to reference a different PVC to have its own separate PersistentVolume.<br><br>
+
+To do that, surely you're not expected to create as many PVCs as the number of pods you plan to have in<br>
+StatefulSet upfront - of cource not. 
+
+#### Teaming up Pod templates with VolumeClaim templates
+<img src="VolumeClaimTemplates.png"><br>
+The PVs for the claim can either be provisioned up-front or just in time through dynamic provisioning
+
+#### Understanding the creation and deletion of PVCs
+Scaling up a StatefulSet by one creates two or more API objects.<br>
+Scaling down, however, deletes only the pod, leaving the claims alone.<br>
+The reason for this is obvious; to protect the data stored in PV.<br>
+For this reason, you're required to delete PVCs manually if in need.
+
+#### Reattaching the PVC to the new instance of the same pod
+The fact that the PVC remains after a scale-down means a subsequent scale-up can reattach the same claim along with the bound PV and its contents to the new pod instance. If you accidentally scale down a StatefulSet, you can und the mistake by scaling up again and the new pod will get the same persisted state again. <br>
+<img src="Reattachment.png"><br>
+
+### Understanding StatefulSet guarantees
+Aside from stable identity and storage, StatefulSets also have different guarantees regarding their pods. 
+
+#### Implications of stable identity and storage
+While regular, stateless pods are fungible, stateful pods are NOT.<br>
+Stateful pod is supposed to be replaced with an identical pod when things happen.<br>
+
+    But what if K8S can't be sure about the state of the pod?
+
+If it creates a replacement pod with the same identity, two instances of the app with the same identity might be running in the system.<br>
+The two would also be bound to the same storage.
+
+#### Introducing StatefulSet's At-Most-One-Semantics
+K8S mut thus take great care to ensure two stateful pod instances are never running with the same identity.<br>
+A StatefulSet must guarantee *at-most-one* semantics for stateful pod instances.<br>
+What does that mean? 
+
+    This means a StatefulSet must be absolutely certain that a pod is no longer running before it can create a replacement pod. 
+
+Before we demonstrate this, you need to create a StatefulSet and see how it behaves. 
+
+## Using a StatefulSet
