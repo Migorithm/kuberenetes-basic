@@ -120,20 +120,15 @@ Before we demonstrate this, you need to create a StatefulSet and see how it beha
 
 ### Creating the app and container image
 To properly show StatefulSets in action, you'll build your own clustered data store.<br>
-app.js:
+app1.js:
 ```js
-
 const http = require('http');
 const os = require('os');
 const fs = require('fs');
-const dns = require('dns');
 
-const dataFile = "/var/data/kubia.txt"; //1
-const serviceName = "kubia.default.svc.cluster.local";
-const port = 8080;
+const dataFile = "/var/data/migo.txt";
 
-
-function fileExists(file) { // file existence check
+function fileExists(file) {
   try {
     fs.statSync(file);
     return true;
@@ -142,64 +137,25 @@ function fileExists(file) { // file existence check
   }
 }
 
-function httpGet(reqOptions, callback) {
-  return http.get(reqOptions, function(response) {
-    var body = '';
-    response.on('data', function(d) { body += d; });
-    response.on('end', function() { callback(body); });
-  }).on('error', function(e) {
-    callback("Error: " + e.message);
-  });
-}
-
-var handler = function(request, response) { //2
+var handler = function(request, response) {
   if (request.method == 'POST') {
     var file = fs.createWriteStream(dataFile);
     file.on('open', function (fd) {
       request.pipe(file);
-      console.log("New data has been received and stored.")
+      console.log("New data has been received and stored.");
       response.writeHead(200);
       response.end("Data stored on pod " + os.hostname() + "\n");
     });
   } else {
+    var data = fileExists(dataFile) ? fs.readFileSync(dataFile, 'utf8') : "No data posted yet";
     response.writeHead(200);
-    if (request.url == '/data') {
-      var data = fileExists(dataFile) ? fs.readFileSync(dataFile, 'utf8') : "No data posted yet";
-      response.end(data);
-    } else {
-      response.write("You've hit " + os.hostname() + "\n");
-      response.write("Data stored in the cluster:\n");
-      dns.resolveSrv(serviceName, function (err, addresses) {
-        if (err) {
-          response.end("Could not look up DNS SRV records: " + err);
-          return;
-        }
-        var numResponses = 0;
-        if (addresses.length == 0) {
-          response.end("No peers discovered.");
-        } else {
-          addresses.forEach(function (item) {
-            var requestOptions = {
-              host: item.name,
-              port: port,
-              path: '/data'
-            };
-            httpGet(requestOptions, function (returnedData) {
-              numResponses++;
-              response.write("- " + item.name + ": " + returnedData + "\n");
-              if (numResponses == addresses.length) {
-                response.end();
-              }
-            });
-          });
-        }
-      });
-    }
+    response.write("You've hit " + os.hostname() + "\n");
+    response.end("Data stored on this pod: " + data + "\n");
   }
 };
 
 var www = http.createServer(handler);
-www.listen(port);
+www.listen(8080);
 ```
 <br>
 
@@ -428,4 +384,267 @@ Let's check:
 
     curl -X GET localhost:8001/api/v1/namespaces/default/pods/pod_name/proxy/
 
-#### Scaling a StatefulSet
+#### Exposing Stateful Pods through a Regular, Non-Headless Service
+Before you move on, you're going to add a proper, non-headless Service in front of your pods.<br>
+because clients usually connect to the pods through a Non-headless Service rather than connecting them directly.<br>
+
+  Headless Service + Non-Headless service?
+
+  Yeah. That's how it is done. Through Non-Headless service, we want to do SRV lookup  that is 
+  used inside the applications, And through regular Service, we will enable user to connect to pods. 
+
+<br>
+
+migo-service-public.yaml
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: migo-public
+spec:
+  selector:
+    app: kubia
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+This is not externally exposed Service. You can only accecss it from inside the cluster.<br>
+
+#### Connecting to cluster-internal services through the API server. 
+You can use the same proxy feature provided by API server to access the service they way<br>
+you've accessed individual pods, url of which looks like this:
+
+  /api/v1/namespaces/{namespace}/services/{service_name}/proxy/
+
+  #example
+  curl localhost:8001/api/v1/namespaces/default/services/migo-public/proxy/
+
+Of course, each request lands on a random cluster node. 
+
+
+
+## Discovering peers in a StatefulSet
+We still need to cover one more important thing; **peer discovery**.<br>
+To put it in another way, we have to let them find other members of the cluster.<br>
+Each member of a StatefulSet needs to easily find all the other members.<br>
+You could do that by talking to API server, but one of K8S' aims is to expose<br>
+features that help keep applications completely Kubernetes-agnostic.<br><br>
+
+What then? How about DNS? Depending on how much you know about DNS, you probably<br>
+understand what  
+- A 
+- CNAME 
+- MX record 
+are used for.<br>
+
+### DNS?
+
+  Note: DNS records are the elements that tell the DNS which URLs are associated with a given IP address.
+
+  A Records are the most basic type. 
+  The “A” stands for “Address,” as their function is to tie a domain name or URL directly to an IP address. 
+  Here’s an example:
+
+  Host Record         Points to           TTL
+  localhost           127.0.0.1           4 hours
+  store.website       10.108.11.45        4 hours
+
+  CNAME is short for “Canonical Name.” 
+  CNAME records are essentially aliases that tie one domain name to another. 
+  For example, if you type “elegantthemes.com” into your browser, the DNS directs you to www.elegantthemes.com because there is an alias that points the former to the latter. CNAME records always point to either an A Record or another CNAME. Here’s what they look like:
+
+  Host Record         Record Type	   Points to           TTL
+  mydomain.com        A              127.0.0.1           4 hours
+  store.website       CNAME          mydomain.com        4 hours
+  ftp.mydomain.com    CNAME	         mydomain.com        4 hours
+
+
+  Finally, MX or “Mail Exchange” records deal with sending email. 
+  They tell the DNS where a particular email address is located. 
+
+### SRV
+Other lesser-known types of DNS records also exist:
+
+  The DNS "service" (SRV) record specifies a host and "port" for specific services such as voice over IP (VoIP), instant messaging, and so on. 
+  Most other DNS records only specify a server or an IP address, but SRV records include a port at that IP address as well.
+
+  An example SRV record would actually look like:
+  _xmpp._tcp.example.com.     86400     IN    SRV     10    5     5223    server.example.com.
+
+  In the above example, "_xmpp" indicates the type of service (the XMPP protocol) and "_tcp" indicates the TCP transport protocol, while "example.com" is the host, or the domain name. "Server.example.com" is the target server and "5223" indicates the port within that server.
+
+  SRV records must point to an A record (in IPv4) or an AAAA record (in IPv6). 
+  The server name they list cannot be a CNAME. So "server.example.com" must lead directly to an A or AAAA record under that name.
+
+### SRV in Kubernetes
+Kubernetes creates SRV records to point to the hostnames of the pods backing a headless service.<br>
+You're going to list the SRV records for your stateful pods by running the dig DNS lookup tool inside a new<br>
+temporary pod. 
+
+  kubectl run -it srvlookup --image=tutum/dnsutils --rm --restart=Never -- dig SRV headless_service_name.default.svc.cluster.local
+
+- \-\-restart=Never : for a one-off pod
+- \-\-rm : It will be deleted as sonn as it terminates. 
+
+It will show you two section:
+- ANSWER SECTION : SRV records pointing to the pods backing your headless service
+- ADDITIONAL SECTION : A record given to pods.
+
+For a pod to get a list of all the other pods of a StatefulSet, all you need to do is perform an SRV DNS lookup.<br>
+In our Node.js for example, the lookup is performed like this:
+```js
+dns.resolveSrv("service FQDN", callBackFunction)
+```
+
+### Implementing peer discovery through DNS
+The cluster can store multiple data entries but clients current have no good way to see all those entries.<br>
+Because services forward requests to pods randomly, a client would need to perform many requests until it hits all the pods<br>
+if it wanted to get the data from all the pods. <br><br>
+
+You can improve this by having the node respond with data from all the cluster nodes. To do this, the node needs to find<br>
+all its peers. To do that, you need to modify app's source code. <br>
+app2.js:
+```js
+
+const http = require('http');
+const os = require('os');
+const fs = require('fs');
+const dns = require('dns');
+
+const dataFile = "/var/data/migo.txt"; //1
+const serviceName = "kubia.default.svc.cluster.local";
+const port = 8080;
+
+
+function fileExists(file) { // file existence check
+  try {
+    fs.statSync(file);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function httpGet(reqOptions, callback) {
+  return http.get(reqOptions, function(response) {
+    var body = '';
+    response.on('data', function(d) { body += d; });
+    response.on('end', function() { callback(body); });
+  }).on('error', function(e) {
+    callback("Error: " + e.message);
+  });
+}
+
+var handler = function(request, response) { //2
+  if (request.method == 'POST') {
+    var file = fs.createWriteStream(dataFile);
+    file.on('open', function (fd) {
+      request.pipe(file);
+      console.log("New data has been received and stored.")
+      response.writeHead(200);
+      response.end("Data stored on pod " + os.hostname() + "\n");
+    });
+  } else {
+    response.writeHead(200);
+    if (request.url == '/data') {
+      var data = fileExists(dataFile) ? fs.readFileSync(dataFile, 'utf8') : "No data posted yet";
+      response.end(data);
+    } else {
+      response.write("You've hit " + os.hostname() + "\n");
+      response.write("Data stored in the cluster:\n");
+      dns.resolveSrv(serviceName, function (err, addresses) { // the app performs DNS lookup to optain SRV records
+        if (err) {
+          response.end("Could not look up DNS SRV records: " + err);
+          return;
+        }
+        var numResponses = 0;
+        if (addresses.length == 0) {
+          response.end("No peers discovered.");
+        } else {
+          addresses.forEach(function (item) { // each pod pointed to by an SRV record is then contacted to get its data.
+            var requestOptions = {
+              host: item.name,
+              port: port,
+              path: '/data'
+            };
+            httpGet(requestOptions, function (returnedData) { // each pod pointed to by an SRV record is then contacted to get its data.
+              numResponses++;
+              response.write("- " + item.name + ": " + returnedData + "\n");
+              if (numResponses == addresses.length) {
+                response.end();
+              }
+            });
+          });
+        }
+      });
+    }
+  }
+};
+
+var www = http.createServer(handler);
+www.listen(port);
+
+```
+
+The following figure shows what happens when a GET request is received by your app.<br> 
+<img src="SRV.png"><br>
+- The server that receives the request first perform SRV record lookup.
+- Then sends a GET request to each of the pods backing the service.
+- Finally, it returns a list of all the nodes along with the data stored on each of them.
+
+It seems quite similar to how ElasticSearch works. 
+
+### Updating a StatefulSet
+Do the following command
+
+  kubectl edit statefulset migo
+
+change 
+- spec.replicas : 3
+- spec.template.spec.containers.image: new image
+
+  kubectl get po
+
+The new pod instance should be running the new image now, but what about the existing two replicas?<br>
+Starting from K8S vrsion 1.7, StatefulSets support rolling updates the same way Deployments and DaemonSets do.<br>
+See the StatefulSet's *spec.updateStrategy* filed documentation using *kubectl explain*.
+
+
+
+### Try-out!
+
+  curl -XPOST -d "I'm such a nice guy" localhost:8001/api/v1/namespaces/default/services/migo-public/proxy/
+
+  curl -XPOST -d "How sweet I am" localhost:8001/api/v1/namespaces/default/services/migo-public/proxy/
+
+  #read data
+  curl -XGET localhost:8001/api/v1/namespaces/default/services/migo-public/proxy/
+
+When a client request reaches one of your nodes, it discovers all its peers, gathers data from them,<br> 
+and sends all the data back to the client.
+
+## Understanding how StatefulSets deal with node failures
+Kubernetes must be absolutely sure that a statefulpod is no longer running before creating its replacement.<br>
+To put it simply, it's not application running inside the Pods or Pods itself which report,<br> 
+but **Kubelet** which stopped reporting the node's state to the master.<br><br>
+
+With the node's network down, Kubelet running on the node can no longer contact the K8S API server.<br>
+Then after a while, control plane will mark the "node" as *"NotReady"*, "pod" as "Unknown"<br>
+
+### What if a failed node comes back online?
+If the pod's status remain unknown for more than a few minutes(This is configurable),<br>
+The pod is automatically evicted from the node. This is done by master(control plane)<br>
+
+### Deleting the pod manually
+You know the nod isn't coming back, but you need all the pods running to handle clients properly.<br>
+Then you need to get the dead pod rescheduled to a healthy node.<br>
+As mentioned earlier, you need to delete the node or pod **manually**.<br><br>
+
+With that though, if you try to delete them, the chances are it's not deleted.<br>
+In fact, the pod will have been makred for deletion even before you try to delete them.<br>
+It will be removed as soon as the Kubelet on failed server gets back on, but with network down,<br>
+They can never come back. **So you have to forcibly delete the pod.**
+
+  kubectl delete po migo-0  --force --grace-period 0
+
+Don't delete stateful pods forcibly unless you know what you are doing.
